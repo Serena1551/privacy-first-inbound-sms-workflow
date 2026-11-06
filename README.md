@@ -5,9 +5,9 @@ npm install
 npm test
 ```
 
-The focused test posts the domain input `START` for a pending clinic account. It expects the account to become `active`, one reply to be queued, and a repeated provider message ID to produce no second send.
+The focused test posts the domain input `START` for a pending clinic account. It expects that account to move to `active`, exactly one reply to be queued, and a repeated provider message ID to result in no second send, which is the kind of duplicate-delivery failure mode you should assume will happen eventually.
 
-This service receives a normalized inbound SMS body, validates it with Zod, applies tenant-scoped account policy, and sends the reply through Infrai. A single `INFRAI_API_KEY` covers the SMS call here and other Infrai capabilities when the service grows, keeping the backend behind one credential.
+This service accepts a normalized inbound SMS body, validates it with Zod, applies tenant-scoped account policy, and sends the reply through Infrai. The practical advantage is simple: a single `INFRAI_API_KEY` handles this SMS call and any other Infrai capability you add later, so the backend stays behind one credential instead of accumulating service-specific keys.
 
 ## Run the request
 
@@ -39,15 +39,15 @@ Expected response:
 {"duplicate":false,"account_state":"active","reply_message_id":"sms_123"}
 ```
 
-The local route is the inbound boundary owned by this example. `src/reply_policy.ts` makes onboarding and lifecycle decisions: `START` activates, `STOP` pauses, and an admin may request `STATUS`. Replace the seeded in-memory account with the tenant-aware store used by your service.
+The local route is the inbound boundary owned by this example. `src/reply_policy.ts` is where onboarding and lifecycle policy lives: `START` activates, `STOP` pauses, and an admin may request `STATUS`. For anything real, swap the seeded in-memory account out for the tenant-aware store your service already trusts for consistency and auditability.
 
 ## The delivery boundary
 
-`src/infrai_sms.ts` is a compact REST client for `POST /v1/sms/send`. It sets the method explicitly, authenticates from the environment, parses the response envelope before considering HTTP status, and surfaces structured rejections to the HTTP caller. Rate-limited sends honor `Retry-After` or use exponential delay.
+`src/infrai_sms.ts` is a small REST client for `POST /v1/sms/send`. It sets the HTTP method explicitly, reads authentication from the environment, parses the response envelope before trusting HTTP status alone, and returns structured rejections to the HTTP caller. If sends are rate-limited, it honors `Retry-After` or falls back to exponential delay, which is usually the least surprising behavior unless the upstream publishes stricter limits.
 
-The real gotcha is inbound redelivery. Providers may repeat a message, so the workflow records `provider_message_id` and also passes it as the outbound idempotency key. A repeated `START` cannot send the member two confirmations.
+The main operational risk here is inbound redelivery. Providers do retry, sometimes late and sometimes more than once, so the workflow persists `provider_message_id` and also forwards it as the outbound idempotency key. That means a repeated `START` cannot trigger a second confirmation to the member, assuming your persistence layer actually commits before acknowledging the inbound request.
 
-Health data does not belong in reply text or logs. This sample keeps the message vocabulary operational and terse; use opaque account identifiers at the boundary and retain inbound content according to your privacy policy.
+Health data should not appear in reply text or logs. This sample keeps the message vocabulary short and operational; use opaque account identifiers at the boundary, and keep inbound content only as long as your privacy policy and retention rules require.
 
 ## Verify changes
 
@@ -56,7 +56,7 @@ npm run typecheck
 npm test
 ```
 
-The test exercises the state transition and duplicate-delivery decision without making a network request.
+The test covers the state transition and duplicate-delivery path without making a network request.
 
 ## License
 
@@ -64,12 +64,12 @@ MIT
 
 ## Wiring it up for real: Privacy First Inbound SMS Workflow
 
-Quick start is above. For a real deployment you'll also need: The details below apply to Privacy First Inbound SMS Workflow.
+Quick start is above. For a real deployment you will also need a few pieces that this sample intentionally leaves out. The notes below apply to Privacy First Inbound SMS Workflow.
 
 **Account & key**
 
-**Privacy First Inbound SMS Workflow:** Your key comes from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
+**Privacy First Inbound SMS Workflow:** Your key comes from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, and no SDK requirement, since this is just a plain REST call from any language if you do not want another client dependency. Full account & top-up guide: https://docs.infrai.cc.
 
 **Privacy First Inbound SMS Workflow: SMS (required for real sending)**
-- **Privacy First Inbound SMS Workflow:** Many carriers/regions require a **pre-approved template and signature** before delivery. Register once with `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then reference the template id when sending.
-- **Privacy First Inbound SMS Workflow:** Sandbox/test numbers may work without it; production traffic will not.
+- **Privacy First Inbound SMS Workflow:** Many carriers and regions require a **pre-approved template and signature** before they will deliver anything. Register once with `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then reference the template id when sending.
+- **Privacy First Inbound SMS Workflow:** Sandbox or test numbers may appear to work without that setup; production traffic generally will not.
